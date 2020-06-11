@@ -1910,13 +1910,21 @@ class TorchAgent(ABC, Agent):
             and batch.text_vec is not None
         ):
             # tokens per batch
-            # we divide by the binary is_primary_worker() so that the numerator is
-            # num_tokens in all workers, and the denominator is 1.
-            tpb = GlobalAverageMetric(
-                (batch.label_vec != self.NULL_IDX).sum().item(),
-                float(is_primary_worker()),
+            ttpb = GlobalAverageMetric(
+                (batch.text_vec != self.NULL_IDX).sum().item(),
+                0.0,  # the batch is counted in update_params to handle update_freq
             )
-            self.global_metrics.add('tpb', tpb)
+            ltpb = GlobalAverageMetric(
+                (batch.label_vec != self.NULL_IDX).sum().item(),
+                0.0,  # the batch is counted in update_params to handle update_freq
+            )
+            self.global_metrics.add('tpb_t', ttpb)
+            self.global_metrics.add('tpb_l', ltpb)
+            self.global_metrics.add('tpb', ttpb + ltpb)
+            self.global_metrics.add(
+                'expb',
+                GlobalAverageMetric(batch.text_vec.shape[0], int(is_primary_worker())),
+            )
 
         if self.is_training:
             output = self.train_step(batch)
@@ -2043,6 +2051,14 @@ class TorchAgent(ABC, Agent):
             self.global_metrics.add(
                 'fp16_loss_scalar', GlobalAverageMetric(self.optimizer.loss_scale)
             )
+
+        if is_primary_worker():
+            # put the dominator down for the tokens per batch
+            # we only do this in the primary worker so the numerator is num_tokens
+            # across all workers, and the denominator is 1 per sgd step
+            self.global_metrics.add('tpb', GlobalAverageMetric(0.0, 1.0))
+            self.global_metrics.add('tpb_t', GlobalAverageMetric(0.0, 1.0))
+            self.global_metrics.add('tpb_l', GlobalAverageMetric(0.0, 1.0))
 
         self.optimizer.step()
 
